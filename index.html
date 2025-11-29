@@ -12,18 +12,31 @@
             font-family: 'Inter', sans-serif;
         }
 
-        /* 保证容器定位和宽高 - 尺寸增大 */
+        /* 保证容器定位和宽高 - 响应式优化 */
         .game-container {
             display: flex;
             flex-direction: column;
-            max-width: 1000px; /* 增大最大宽度 */
-            width: 95%; /* 适应大部分屏幕 */
-            height: 90vh; /* 增大高度 */
+            max-width: 1000px; 
+            width: 95%; 
+            height: 90vh; 
             min-height: 500px;
             background: #2d3748; /* 容器背景 */
             border-radius: 16px;
             overflow: hidden;
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            /* --- 手机端适配 --- */
+            /* 手机上占满整个视口，并移除圆角 */
+            transition: all 0.3s ease-in-out;
+        }
+        
+        @media (max-width: 768px) {
+            .game-container {
+                max-width: 100vw;
+                width: 100vw;
+                height: 100vh;
+                min-height: initial;
+                border-radius: 0;
+            }
         }
         
         .game-area {
@@ -35,6 +48,8 @@
             display: block;
             width: 100%;
             height: 100%;
+            /* 确保 canvas/video 尺寸适应容器，同时保持内部内容比例 */
+            object-fit: cover; 
         }
 
         /* 原始视频源，仅用于模型检测，保持隐藏 */
@@ -55,11 +70,16 @@
             background: none; /* 背景由 JS 绘制 */
         }
         
-        /* 浮动元素 */
+        /* 浮动元素 - 调整 padding 适应手机 */
         .floating-ui {
             position: absolute;
             padding: 1rem;
             z-index: 20;
+        }
+        @media (max-width: 768px) {
+            .floating-ui {
+                padding: 0.5rem; /* 手机上减小内边距 */
+            }
         }
         
         /* 节点追踪画面 (右上角) */
@@ -67,14 +87,22 @@
             position: absolute;
             top: 1rem;
             right: 1rem;
-            width: 150px; /* 小窗口尺寸 */
+            width: 150px; /* 默认尺寸 */
             height: 112px; 
             border: 4px solid #fff;
             border-radius: 8px;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-            z-index: 30; /* 必须在所有UI元素之上 */
-            /* 保持镜像，以便用户看到的手部与追踪节点匹配 */
+            z-index: 30; 
             transform: scaleX(-1); 
+        }
+        /* 手机上缩小追踪画面 */
+        @media (max-width: 768px) {
+            #tracker-canvas {
+                width: 100px;
+                height: 75px;
+                top: 0.5rem;
+                right: 0.5rem;
+            }
         }
 
         .loading-overlay {
@@ -96,7 +124,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915"></script>
 </head>
-<body class="bg-gray-800 flex flex-col items-center justify-center min-h-screen p-4">
+<body class="bg-gray-800 flex flex-col items-center justify-center min-h-screen p-0 md:p-4">
 
     <div class="game-container">
         
@@ -110,23 +138,23 @@
             
             <!-- 左上角: 积分显示 -->
             <div class="floating-ui top-0 left-0">
-                <div class="bg-yellow-400 text-gray-900 p-2 rounded-lg shadow-xl border-2 border-yellow-600">
-                    <span class="text-lg font-bold">SCORE:</span>
-                    <span id="score-display" class="text-3xl font-extrabold ml-2">0</span>
+                <div class="bg-yellow-400 text-gray-900 p-2 rounded-lg shadow-xl border-2 border-yellow-600 md:text-base text-sm">
+                    <span class="md:text-lg font-bold">SCORE:</span>
+                    <span id="score-display" class="md:text-3xl text-xl font-extrabold ml-2">0</span>
                 </div>
             </div>
             
             <!-- 右上角: 计时器显示 -->
             <div class="floating-ui top-0 right-0">
-                <div class="bg-red-600 text-white p-2 rounded-lg shadow-xl border-2 border-red-800">
-                    <span class="text-lg font-bold">TIME:</span>
-                    <span id="timer-display" class="text-3xl font-extrabold ml-2">00:00</span>
+                <div class="bg-red-600 text-white p-2 rounded-lg shadow-xl border-2 border-red-800 md:text-base text-sm">
+                    <span class="md:text-lg font-bold">TIME:</span>
+                    <span id="timer-display" class="md:text-3xl text-xl font-extrabold ml-2">00:00</span>
                 </div>
             </div>
 
             <!-- 右上角: 全屏按钮 (位于追踪画面下方) -->
-            <div class="floating-ui top-32 right-0"> 
-                <button id="fullscreen-btn" class="px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 transition duration-150 transform hover:scale-105">
+            <div class="floating-ui top-32 right-0 md:top-32 top-24"> 
+                <button id="fullscreen-btn" class="px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 transition duration-150 transform hover:scale-105 text-sm md:text-base">
                     全屏 
                 </button>
             </div>
@@ -136,7 +164,7 @@
                 <div id="settings-panel" class="p-3 bg-gray-700 bg-opacity-90 text-white rounded-lg shadow-lg">
                     <h3 class="text-sm font-bold mb-1 border-b border-gray-600">🕹️ 游戏说明</h3>
                     <p id="system-message" class="text-xs text-gray-300">正在加载模型...</p>
-                    <p class="text-xs mt-1">使用**食指指尖**作为切刀，切水果得分，切到**💣炸弹**游戏结束。</p>
+                    <p class="text-xs mt-1">使用**食指指尖**作为切刀，切水果得分，切到**💣炸弹**会扣 30 分。</p>
                 </div>
             </div>
 
@@ -153,9 +181,9 @@
             
             <!-- 游戏开始/结束 模态框 -->
             <div id="game-modal" class="loading-overlay" style="z-index: 60;">
-                <div class="p-8 bg-gray-900 rounded-xl shadow-2xl text-center border-4 border-yellow-500">
-                    <h2 id="modal-title" class="text-4xl font-extrabold text-yellow-400 mb-4">水果忍者</h2>
-                    <p id="modal-message" class="text-white mb-6 text-lg">选择难度并开始游戏！</p>
+                <div class="p-8 bg-gray-900 rounded-xl shadow-2xl text-center border-4 border-yellow-500 max-w-sm w-11/12">
+                    <h2 id="modal-title" class="text-3xl md:text-4xl font-extrabold text-yellow-400 mb-4">水果忍者</h2>
+                    <p id="modal-message" class="text-white mb-6 text-base md:text-lg">选择难度并开始游戏！</p>
                     
                     <div id="difficulty-selector" class="flex flex-col space-y-3 mb-6">
                         <button data-mode="Easy" class="mode-btn px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg transition duration-150 transform hover:scale-105">初级 (5:00)</button>
@@ -184,9 +212,9 @@
         
         // --- Difficulty Settings (in seconds) ---
         const DIFFICULTY_SETTINGS = {
-            Easy: { time: 300, spawnInterval: 1800, maxSpawn: 2, bombChance: 0.05, heightBoost: 1.0 }, // 5 minutes
-            Medium: { time: 180, spawnInterval: 1500, maxSpawn: 3, bombChance: 0.10, heightBoost: 1.2 }, // 3 minutes
-            Hard: { time: 60, spawnInterval: 1200, maxSpawn: 4, bombChance: 0.15, heightBoost: 1.5 }, // 1 minute
+            Easy: { time: 300, spawnInterval: 1800, maxSpawn: 2, bombChance: 0.05 }, // 5 minutes
+            Medium: { time: 180, spawnInterval: 1500, maxSpawn: 3, bombChance: 0.10 }, // 3 minutes
+            Hard: { time: 60, spawnInterval: 1200, maxSpawn: 4, bombChance: 0.15 }, // 1 minute
         };
 
         // --- Game State Variables ---
@@ -197,7 +225,6 @@
         let lastSpawnTime = 0;
         const FRUIT_MAX_RADIUS = 35;
         const GRAVITY = 0.6;
-        const FRUIT_SPAWN_HEIGHT_BASE = 40; // 初始Y速度的分母，数字越小，抛得越高
         let lastRender = 0; 
         
         let isGameOver = true;
@@ -291,16 +318,71 @@
             });
         }
         
+        /**
+         * 三次贝塞尔曲线计算
+         * B(t) = (1-t)^3 P0 + 3(1-t)^2 t P1 + 3(1-t) t^2 P2 + t^3 P3
+         * @param {number} t - Normalized time (0 to 1)
+         * @param {object} p0 - Start Point
+         * @param {object} p1 - Control Point 1
+         * @param {object} p2 - Control Point 2
+         * @param {object} p3 - End Point
+         */
+        function getBezierPoint(t, p0, p1, p2, p3) {
+            const t2 = t * t;
+            const t3 = t2 * t;
+            const mt = 1 - t;
+            const mt2 = mt * mt;
+            const mt3 = mt2 * mt;
+
+            const x = mt3 * p0.x + 3 * mt2 * t * p1.x + 3 * mt * t2 * p2.x + t3 * p3.x;
+            const y = mt3 * p0.y + 3 * mt2 * t * p1.y + 3 * mt * t2 * p2.y + t3 * p3.y;
+            return { x, y };
+        }
 
         // --- 2. Fruit Class (Handles Fruits and Bombs) ---
 
         class Fruit {
-            constructor(canvasWidth, canvasHeight, isBomb = false, heightBoost = 1.0) {
-                // 随机从屏幕左侧或右侧生成
-                const startX = Math.random() > 0.5 ? Math.random() * canvasWidth * 0.1 : canvasWidth * 0.9 - Math.random() * canvasWidth * 0.1;
-                this.x = startX;
-                this.y = canvasHeight + 10; // 从屏幕下方开始
+            constructor(canvasWidth, canvasHeight, isBomb = false) {
                 
+                // 贝塞尔曲线参数
+                this.pathDuration = 60 + Math.random() * 60; // 1 to 2 seconds at 60 FPS
+                this.t = 0; // Current frame counter (0 to pathDuration)
+
+                // 随机从屏幕左侧或右侧生成
+                const startX = Math.random() * canvasWidth * 0.2 + (Math.random() < 0.5 ? 0 : canvasWidth * 0.8);
+                const launchHeight = canvasHeight + 10; // 从屏幕下方开始
+                const midX = canvasWidth / 2;
+                
+                // P0: 起始点 (屏幕底部)
+                this.p0 = { x: startX, y: launchHeight };
+                
+                // P3: 结束点 (屏幕底部, 倾向于在对侧落下)
+                this.p3 = { 
+                    x: (canvasWidth - startX) + (Math.random() - 0.5) * canvasWidth * 0.1, 
+                    y: launchHeight 
+                };
+
+                // P1 & P2: 控制点 (定义弧度，用于拉高水果到屏幕顶部)
+                const apexY = canvasHeight * (0.05 + Math.random() * 0.2); // 顶点高度 (5% to 25% down)
+
+                // P1: 靠近起始点 1/3 处
+                this.p1 = { 
+                    x: startX + (this.p3.x - startX) * 0.3 + (Math.random() - 0.5) * 150,
+                    y: apexY + Math.random() * 100 // 位于或接近顶点高度
+                };
+                // P2: 靠近结束点 2/3 处
+                this.p2 = { 
+                    x: startX + (this.p3.x - startX) * 0.7 + (Math.random() - 0.5) * 150,
+                    y: apexY - Math.random() * 100 // 位于或接近顶点高度
+                };
+                
+                // 确保起始点和结束点在屏幕内
+                this.p3.x = Math.max(0, Math.min(canvasWidth, this.p3.x));
+                
+                // 初始位置
+                this.x = this.p0.x;
+                this.y = this.p0.y;
+
                 if (isBomb) {
                     this.type = 'bomb';
                     this.scoreValue = 0; 
@@ -312,38 +394,41 @@
                     this.radius = 20 + Math.random() * FRUIT_MAX_RADIUS;
                 }
                 
-                // 赋予一个向上的初始抛物线速度 (增加高度)
-                const baseVelocity = canvasHeight / FRUIT_SPAWN_HEIGHT_BASE;
-                this.velocityY = -(baseVelocity * heightBoost + Math.random() * 5); 
-                this.velocityX = (canvasWidth / 2 - this.x) / 100; // 稍微向中心偏斜
-                this.gravity = GRAVITY;
-                
                 this.sliced = false;
                 this.sliceAnimationTime = 0;
+                
+                // 切割后使用的物理属性
+                this.velocityY = 0; 
+                this.velocityX = 0;
+                this.gravity = GRAVITY;
             }
 
             update() {
                 if (this.sliced) {
-                    // 飞溅动画
+                    // Sliced parts follow physics
                     this.velocityY += this.gravity * 0.5;
+                    this.y += this.velocityY;
+                    this.x += this.velocityX;
                     this.sliceAnimationTime += 1;
                 } else {
-                    // 正常抛物线
-                    this.velocityY += this.gravity;
+                    // Uncut fruit follows Bézier path
+                    this.t += 1;
+                    const tNormalized = this.t / this.pathDuration;
+
+                    if (tNormalized >= 1) {
+                        // Path finished, fruit should be removed in the main game loop
+                        this.t = this.pathDuration + 1; 
+                        return;
+                    }
+
+                    const newPos = getBezierPoint(tNormalized, this.p0, this.p1, this.p2, this.p3);
+                    this.x = newPos.x;
+                    this.y = newPos.y;
                 }
-                
-                // 检查是否应该从顶部反弹 (新增逻辑)
-                if (this.y < this.radius * 2 && this.velocityY < 0) {
-                    this.velocityY *= -0.7; // 反转方向并损失部分能量 (0.7)
-                    this.velocityY += this.gravity; // 立即再次应用重力
-                }
-                
-                this.y += this.velocityY;
-                this.x += this.velocityX;
             }
 
             draw(ctx) {
-                if (this.sliceAnimationTime > 30) return; // 移除飞溅动画结束的水果
+                if (this.sliceAnimationTime > 30) return; // 移除飞溅动画结束的物体
 
                 const fruitEmoji = ['🍉', '🍍', '🥝', '🍒'][this.fruitType];
                 const emoji = this.type === 'bomb' ? '💣' : fruitEmoji;
@@ -487,26 +572,47 @@
             if (distance < item.radius) {
                 
                 if (item.type === 'bomb') {
-                    // 💣 炸弹逻辑：游戏结束
-                    endGame("💣 炸弹爆炸！游戏立即结束！");
+                    // 炸弹逻辑：扣分，但不结束游戏
+                    score = Math.max(0, score - 30); // 扣 30 分，但得分不低于 0
+                    scoreDisplay.textContent = score;
                     item.sliced = true; 
+                    
+                    // 给予视觉提示
+                    systemMessage.textContent = '💥 警告：切到炸弹！扣除 30 分。';
+                    setTimeout(() => {
+                        if (!isGameOver) {
+                            const mode = DIFFICULTY_SETTINGS[currentMode];
+                            systemMessage.textContent = `🚀 模式: ${currentMode} | 目标: 坚持到时间结束`;
+                        }
+                    }, 1500);
+
                     // 红色和黑色爆炸粒子特效
                     for (let i = 0; i < 40; i++) {
                         particles.push(new Particle(item.x, item.y, Math.random() > 0.5 ? '#ff4d4d' : '#333333'));
                     }
-                    return; // 阻止后续水果切片逻辑
+                    
+                    // 模拟切割后的分散
+                    item.velocityY = -10; 
+                    item.velocityX = (Math.random() - 0.5) * 5;
+                    return; 
                 }
 
                 // SLICE! 水果切片逻辑
                 item.sliced = true;
                 score += item.scoreValue;
                 scoreDisplay.textContent = score;
+                
+                // 模拟切割后的分散
                 item.velocityY = -10; // 给予一个向上的弹跳效果
                 item.velocityX = (Math.random() - 0.5) * 5;
                 
+                // 随机选择粒子颜色 (模拟果汁)
+                const fruitColors = ['#ff6347', '#ffd700', '#00ff7f', '#dc143c']; 
+                const color = fruitColors[item.fruitType % fruitColors.length];
+
                 // 创建果汁粒子特效
                 for (let i = 0; i < 20; i++) {
-                    particles.push(new Particle(item.x, item.y, item.color));
+                    particles.push(new Particle(item.x, item.y, color));
                 }
             }
         }
@@ -534,7 +640,7 @@
                 for(let i = 0; i < spawnCount; i++) {
                      // 仅在第一个物体上应用炸弹标记
                      const isCurrentBomb = isBomb && i === 0;
-                     fruits.push(new Fruit(canvas.width, canvas.height, isCurrentBomb, settings.heightBoost));
+                     fruits.push(new Fruit(canvas.width, canvas.height, isCurrentBomb));
                 }
                 
                 lastSpawnTime = now;
@@ -555,11 +661,11 @@
             
             // 4. Clean up off-screen items
             fruits = fruits.filter(item => {
-                // 如果物体已切，允许它飞溅一段距离
+                // 如果物体已切，允许它飞溅一段时间
                 if (item.sliced) return item.sliceAnimationTime <= 30;
                 
-                // 如果未切的物体掉到屏幕底部下方，则移除 (如果炸弹未切掉落，不触发Game Over)
-                return item.y > -100; 
+                // 如果未切的物体已完成贝塞尔曲线路径 (t > pathDuration)，则移除
+                return item.t <= item.pathDuration; 
             });
         }
         
@@ -570,10 +676,28 @@
             // 1. 清除 Canvas
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             
-            // 2. 绘制背景
+            // 2. 绘制背景 (实现 'cover' / 长边裁切)
             if (isTextureLoaded) {
-                // 使用加载的图片作为背景
-                ctx.drawImage(woodTexture, 0, 0, canvas.width, canvas.height);
+                const imgRatio = woodTexture.naturalWidth / woodTexture.naturalHeight;
+                const canvasRatio = canvas.width / canvas.height;
+                let sx, sy, sw, sh; // Source (Image) coordinates
+                
+                if (imgRatio > canvasRatio) {
+                    // 图像比画布宽 (图像横向裁切)
+                    sh = woodTexture.naturalHeight;
+                    sw = sh * canvasRatio;
+                    sx = (woodTexture.naturalWidth - sw) / 2;
+                    sy = 0;
+                } else {
+                    // 图像比画布高 (图像纵向裁切)
+                    sw = woodTexture.naturalWidth;
+                    sh = sw / canvasRatio;
+                    sx = 0;
+                    sy = (woodTexture.naturalHeight - sh) / 2;
+                }
+                
+                // 将裁切后的部分绘制到整个 Canvas 区域
+                ctx.drawImage(woodTexture, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
             } else {
                 // 绘制木纹背景 (模拟) - Fallback
                 const woodGradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
@@ -716,6 +840,20 @@
         }
 
         /**
+         * 调整 Canvas 尺寸以适应容器
+         */
+        function resizeCanvas() {
+            const container = document.querySelector('.game-area');
+            const containerRect = container.getBoundingClientRect();
+            
+            // 注意: canvas.width/height 必须是视频的原始分辨率，以保持模型坐标准确
+            // 我们只需要确保 CSS/display 尺寸与容器匹配即可，这已由 CSS `width: 100%; height: 100%;` 处理
+            
+            // 强制重绘，确保背景和元素在窗口大小变化后正确显示
+            drawGame();
+        }
+
+        /**
          * 加载背景纹理
          */
         function loadTexture() {
@@ -765,13 +903,16 @@
                 video.onloadedmetadata = () => {
                     video.play();
                     
-                    // 设置 Canvas 内部绘制尺寸与视频源匹配（重要：模型坐标依赖此尺寸）
+                    // IMPORTANT: 设置 Canvas 内部绘制尺寸与视频源匹配（模型坐标依赖此尺寸）
                     canvas.width = video.videoWidth;
                     canvas.height = video.videoHeight;
                     
-                    // 追踪画布的内部尺寸也需要与视频源匹配
                     trackerCanvas.width = video.videoWidth;
                     trackerCanvas.height = video.videoHeight;
+                    
+                    // 监听窗口大小变化
+                    window.addEventListener('resize', resizeCanvas);
+                    resizeCanvas(); // 初始调用一次
                     
                     loadModel();
                 };
@@ -862,6 +1003,8 @@
             if (animationFrameId) {
                 cancelAnimationFrame(animationFrameId);
             }
+            window.removeEventListener('resize', resizeCanvas);
+            if (timerInterval) clearInterval(timerInterval);
         };
         
         // 初始设置计时器显示
