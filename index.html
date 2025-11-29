@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>水果忍者 - 手势控制</title>
+    <!-- 引入 Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 使用 Inter 字体 */
+        :root {
+            font-family: 'Inter', sans-serif;
+        }
+
+        /* 保证容器定位和宽高 - 尺寸增大 */
+        .game-container {
+            display: flex;
+            flex-direction: column;
+            max-width: 1000px; /* 增大最大宽度 */
+            width: 95%; /* 适应大部分屏幕 */
+            height: 90vh; /* 增大高度 */
+            min-height: 500px;
+            background: #2d3748; /* 容器背景 */
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+        
+        .game-area {
+            position: relative;
+            flex-grow: 1;
+        }
+
+        #video, #canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* 原始视频源，仅用于模型检测，保持隐藏 */
+        #video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            visibility: hidden;
+            z-index: -1; 
+            transform: scaleX(-1); /* 保持镜像，确保模型坐标正确 */
+        }
+
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 10; 
+            background: none; /* 背景由 JS 绘制 */
+        }
+        
+        /* 浮动元素 */
+        .floating-ui {
+            position: absolute;
+            padding: 1rem;
+            z-index: 20;
+        }
+        
+        /* 节点追踪画面 (右上角) */
+        #tracker-canvas {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            width: 150px; /* 小窗口尺寸 */
+            height: 112px; 
+            border: 4px solid #fff;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            z-index: 30; /* 必须在所有UI元素之上 */
+            /* 保持镜像，以便用户看到的手部与追踪节点匹配 */
+            transform: scaleX(-1); 
+        }
+
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            z-index: 50;
+        }
+    </style>
+    <!-- 引入 TensorFlow.js 和 Hand Pose Detection 库 -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915"></script>
+</head>
+<body class="bg-gray-800 flex flex-col items-center justify-center min-h-screen p-4">
+
+    <div class="game-container">
+        
+        <div class="game-area">
+            <!-- 视频源 (隐藏) -->
+            <video id="video" playsinline autoplay></video> 
+            <!-- 主游戏画布 -->
+            <canvas id="canvas"></canvas>
+            <!-- 节点追踪画布 (右上角) -->
+            <canvas id="tracker-canvas"></canvas>
+            
+            <!-- 左上角: 积分显示 -->
+            <div class="floating-ui top-0 left-0">
+                <div class="bg-yellow-400 text-gray-900 p-2 rounded-lg shadow-xl border-2 border-yellow-600">
+                    <span class="text-lg font-bold">SCORE:</span>
+                    <span id="score-display" class="text-3xl font-extrabold ml-2">0</span>
+                </div>
+            </div>
+            
+            <!-- 右上角: 计时器显示 -->
+            <div class="floating-ui top-0 right-0">
+                <div class="bg-red-600 text-white p-2 rounded-lg shadow-xl border-2 border-red-800">
+                    <span class="text-lg font-bold">TIME:</span>
+                    <span id="timer-display" class="text-3xl font-extrabold ml-2">00:00</span>
+                </div>
+            </div>
+
+            <!-- 右上角: 全屏按钮 (位于追踪画面下方) -->
+            <div class="floating-ui top-32 right-0"> 
+                <button id="fullscreen-btn" class="px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 transition duration-150 transform hover:scale-105">
+                    全屏 
+                </button>
+            </div>
+            
+             <!-- 左下角: 游戏参数/说明 -->
+            <div class="floating-ui bottom-0 left-0 md:w-1/3 w-2/3">
+                <div id="settings-panel" class="p-3 bg-gray-700 bg-opacity-90 text-white rounded-lg shadow-lg">
+                    <h3 class="text-sm font-bold mb-1 border-b border-gray-600">🕹️ 游戏说明</h3>
+                    <p id="system-message" class="text-xs text-gray-300">正在加载模型...</p>
+                    <p class="text-xs mt-1">使用**食指指尖**作为切刀，切水果得分，切到**💣炸弹**游戏结束。</p>
+                </div>
+            </div>
+
+            <!-- 加载指示器 -->
+            <div id="loading" class="loading-overlay hidden">
+                <div class="flex flex-col items-center">
+                    <svg class="animate-spin -ml-1 mr-3 h-8 w-8 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span class="mt-4 text-sm">正在加载手势模型...</span>
+                </div>
+            </div>
+            
+            <!-- 游戏开始/结束 模态框 -->
+            <div id="game-modal" class="loading-overlay" style="z-index: 60;">
+                <div class="p-8 bg-gray-900 rounded-xl shadow-2xl text-center border-4 border-yellow-500">
+                    <h2 id="modal-title" class="text-4xl font-extrabold text-yellow-400 mb-4">水果忍者</h2>
+                    <p id="modal-message" class="text-white mb-6 text-lg">选择难度并开始游戏！</p>
+                    
+                    <div id="difficulty-selector" class="flex flex-col space-y-3 mb-6">
+                        <button data-mode="Easy" class="mode-btn px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg transition duration-150 transform hover:scale-105">初级 (5:00)</button>
+                        <button data-mode="Medium" class="mode-btn px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition duration-150 transform hover:scale-105">中级 (3:00)</button>
+                        <button data-mode="Hard" class="mode-btn px-6 py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg transition duration-150 transform hover:scale-105">高级 (1:00)</button>
+                    </div>
+                    
+                    <button id="restart-game-btn" class="px-8 py-4 bg-yellow-500 text-gray-900 text-xl font-extrabold rounded-lg shadow-lg hover:bg-yellow-400 transition duration-150 transform hover:scale-105 hidden">
+                        重新开始
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Global Variables & Constants ---
+        let detector;
+        let animationFrameId = null;
+        let isModelLoaded = false;
+        
+        // 纹理和 URL
+        const TEXTURE_URL = 'https://i5.3conline.com/images/piclib/201109/16/batch/1/109535/1316136424109zt3mmbxflj.jpg';
+        let woodTexture = new Image();
+        let isTextureLoaded = false;
+        
+        // --- Difficulty Settings (in seconds) ---
+        const DIFFICULTY_SETTINGS = {
+            Easy: { time: 300, spawnInterval: 1800, maxSpawn: 2, bombChance: 0.05, heightBoost: 1.0 }, // 5 minutes
+            Medium: { time: 180, spawnInterval: 1500, maxSpawn: 3, bombChance: 0.10, heightBoost: 1.2 }, // 3 minutes
+            Hard: { time: 60, spawnInterval: 1200, maxSpawn: 4, bombChance: 0.15, heightBoost: 1.5 }, // 1 minute
+        };
+
+        // --- Game State Variables ---
+        let currentMode = 'Easy';
+        let score = 0;
+        let fruits = [];
+        let particles = []; 
+        let lastSpawnTime = 0;
+        const FRUIT_MAX_RADIUS = 35;
+        const GRAVITY = 0.6;
+        const FRUIT_SPAWN_HEIGHT_BASE = 40; // 初始Y速度的分母，数字越小，抛得越高
+        let lastRender = 0; 
+        
+        let isGameOver = true;
+        let timeRemaining = DIFFICULTY_SETTINGS[currentMode].time; // in seconds
+        let timerInterval = null; // for setInterval
+        let timeSinceLastBomb = 0; // 确保炸弹不会连续出现
+        const MIN_TIME_BETWEEN_BOMBS = 4000;
+
+
+        // Hand/Finger State
+        let fingerTip = { x: -1, y: -1, z: 0 }; // 当前食指指尖 (Landmark 8) 
+        let previousFingerTip = { x: -1, y: -1 }; // 上一帧的指尖位置，用于绘制切割路径
+
+        // HTML Elements
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const trackerCanvas = document.getElementById('tracker-canvas');
+        const trackerCtx = trackerCanvas.getContext('2d');
+        
+        const loadingDiv = document.getElementById('loading');
+        const scoreDisplay = document.getElementById('score-display');
+        const systemMessage = document.getElementById('system-message');
+        const fullscreenBtn = document.getElementById('fullscreen-btn');
+        const timerDisplay = document.getElementById('timer-display');
+        const gameModal = document.getElementById('game-modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalMessage = document.getElementById('modal-message');
+        const difficultySelector = document.getElementById('difficulty-selector');
+        const restartGameBtn = document.getElementById('restart-game-btn');
+
+
+        // --- 1. Utility Functions ---
+
+        /**
+         * 计算两点之间的 2D 距离。
+         */
+        function calculateDistance(point1, point2) {
+            if (!point1 || !point2) return Infinity;
+            const dx = point1.x - point2.x;
+            const dy = point1.y - point2.y;
+            return Math.sqrt(dx * dx + dy * dy);
+        }
+        
+        function formatTime(totalSeconds) {
+            const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
+            const seconds = (totalSeconds % 60).toString().padStart(2, '0');
+            return `${minutes}:${seconds}`;
+        }
+        
+        // Landmark connection definition (MediaPipe Hand Skeleton)
+        const connections = [
+            [0, 1], [1, 2], [2, 3], [3, 4],       // Thumb
+            [0, 5], [5, 6], [6, 7], [7, 8],       // Index
+            [5, 9], [9, 10], [10, 11], [11, 12],  // Middle
+            [9, 13], [13, 14], [14, 15], [15, 16], // Ring
+            [13, 17], [17, 18], [18, 19], [19, 20], // Pinky
+            [0, 17]                               // Palm
+        ];
+
+        /**
+         * 绘制手部关键点和连接线到追踪画布
+         */
+        function drawKeypoints(landmarks, context) {
+            // 绘制连接线
+            context.strokeStyle = '#38bdf8'; // Sky blue
+            context.lineWidth = 3;
+            context.lineCap = 'round';
+            context.beginPath();
+            
+            connections.forEach(([start, end]) => {
+                const startPoint = landmarks[start];
+                const endPoint = landmarks[end];
+                context.moveTo(startPoint.x, startPoint.y);
+                context.lineTo(endPoint.x, endPoint.y);
+            });
+            context.stroke();
+
+            // 绘制关键点
+            landmarks.forEach((point, index) => {
+                context.beginPath();
+                // 食指指尖 (Landmark 8) 用红色突出显示
+                if (index === 8) { 
+                    context.fillStyle = 'red';
+                    context.arc(point.x, point.y, 6, 0, 2 * Math.PI);
+                } else {
+                    context.fillStyle = 'white';
+                    context.arc(point.x, point.y, 4, 0, 2 * Math.PI);
+                }
+                context.fill();
+            });
+        }
+        
+
+        // --- 2. Fruit Class (Handles Fruits and Bombs) ---
+
+        class Fruit {
+            constructor(canvasWidth, canvasHeight, isBomb = false, heightBoost = 1.0) {
+                // 随机从屏幕左侧或右侧生成
+                const startX = Math.random() > 0.5 ? Math.random() * canvasWidth * 0.1 : canvasWidth * 0.9 - Math.random() * canvasWidth * 0.1;
+                this.x = startX;
+                this.y = canvasHeight + 10; // 从屏幕下方开始
+                
+                if (isBomb) {
+                    this.type = 'bomb';
+                    this.scoreValue = 0; 
+                    this.radius = 40;
+                } else {
+                    this.type = 'fruit';
+                    this.fruitType = Math.floor(Math.random() * 4); // 0, 1, 2, 3 for fruit types
+                    this.scoreValue = [10, 15, 20, 25][this.fruitType];
+                    this.radius = 20 + Math.random() * FRUIT_MAX_RADIUS;
+                }
+                
+                // 赋予一个向上的初始抛物线速度 (增加高度)
+                const baseVelocity = canvasHeight / FRUIT_SPAWN_HEIGHT_BASE;
+                this.velocityY = -(baseVelocity * heightBoost + Math.random() * 5); 
+                this.velocityX = (canvasWidth / 2 - this.x) / 100; // 稍微向中心偏斜
+                this.gravity = GRAVITY;
+                
+                this.sliced = false;
+                this.sliceAnimationTime = 0;
+            }
+
+            update() {
+                if (this.sliced) {
+                    // 飞溅动画
+                    this.velocityY += this.gravity * 0.5;
+                    this.sliceAnimationTime += 1;
+                } else {
+                    // 正常抛物线
+                    this.velocityY += this.gravity;
+                }
+                
+                // 检查是否应该从顶部反弹 (新增逻辑)
+                if (this.y < this.radius * 2 && this.velocityY < 0) {
+                    this.velocityY *= -0.7; // 反转方向并损失部分能量 (0.7)
+                    this.velocityY += this.gravity; // 立即再次应用重力
+                }
+                
+                this.y += this.velocityY;
+                this.x += this.velocityX;
+            }
+
+            draw(ctx) {
+                if (this.sliceAnimationTime > 30) return; // 移除飞溅动画结束的水果
+
+                const fruitEmoji = ['🍉', '🍍', '🥝', '🍒'][this.fruitType];
+                const emoji = this.type === 'bomb' ? '💣' : fruitEmoji;
+                const fontSize = this.type === 'bomb' ? this.radius * 1.5 : this.radius * 2;
+                
+                // 使用 Emoji 绘制
+                if (this.sliced) {
+                    ctx.save();
+                    ctx.font = `${this.radius}px sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    
+                    // 绘制两半切开的效果
+                    ctx.globalAlpha = 1 - this.sliceAnimationTime / 30; // 渐隐
+                    ctx.fillText(emoji, this.x - 10, this.y); 
+                    ctx.fillText(emoji, this.x + 10, this.y + 5); 
+                    ctx.restore();
+                } else {
+                    // 绘制未切割的物体
+                    ctx.font = `${fontSize}px sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(emoji, this.x, this.y);
+                }
+            }
+        }
+        
+        // --- 3. Particle Class (用于飞溅特效) ---
+
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.size = Math.random() * 5 + 2;
+                this.color = color;
+                this.life = 60; // 粒子生命周期 (帧)
+                this.vx = (Math.random() - 0.5) * 5; // 随机水平速度
+                this.vy = (Math.random() - 1) * 5; // 随机向上速度
+                this.gravity = 0.2;
+            }
+
+            update() {
+                this.vy += this.gravity;
+                this.x += this.vx;
+                this.y += this.vy;
+                this.life--;
+            }
+
+            draw(ctx) {
+                ctx.fillStyle = this.color;
+                ctx.globalAlpha = this.life / 60; // 渐隐
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        // --- 4. Game Control Functions ---
+
+        /**
+         * 倒计时更新逻辑
+         */
+        function updateTimer() {
+            timeRemaining--;
+            timerDisplay.textContent = formatTime(timeRemaining);
+            
+            if (timeRemaining <= 0) {
+                clearInterval(timerInterval);
+                endGame(`🎉 时间到！你的最终得分是 ${score}`);
+            }
+        }
+        
+        /**
+         * 开始游戏
+         */
+        function startGame(mode) {
+            if (timerInterval) clearInterval(timerInterval);
+            
+            currentMode = mode;
+            const settings = DIFFICULTY_SETTINGS[mode];
+            timeRemaining = settings.time;
+            score = 0;
+            fruits = [];
+            particles = [];
+            isGameOver = false;
+            lastSpawnTime = 0;
+            timeSinceLastBomb = performance.now(); // 重置炸弹计时
+            
+            scoreDisplay.textContent = score;
+            timerDisplay.textContent = formatTime(timeRemaining);
+            gameModal.classList.add('hidden');
+            
+            // 启动倒计时
+            timerInterval = setInterval(updateTimer, 1000);
+            
+            // 确保动画循环正在运行
+            if (!animationFrameId) {
+                animationFrameId = requestAnimationFrame(gameLoop);
+            }
+            
+            systemMessage.textContent = `🚀 模式: ${mode} | 目标: 坚持到时间结束`;
+        }
+        
+        /**
+         * 结束游戏
+         */
+        function endGame(message) {
+            isGameOver = true;
+            if (timerInterval) clearInterval(timerInterval);
+            
+            modalTitle.textContent = "游戏结束！";
+            modalMessage.innerHTML = `${message} <br> 最终得分: <span class="text-yellow-400 text-3xl font-bold">${score}</span>`;
+            difficultySelector.classList.add('hidden');
+            restartGameBtn.classList.remove('hidden');
+            
+            gameModal.classList.remove('hidden');
+        }
+
+        /**
+         * 重新开始游戏 (显示模式选择界面)
+         */
+        function restartGame() {
+             // 重置 UI 到模式选择状态
+            modalTitle.textContent = "水果忍者";
+            modalMessage.textContent = "选择难度并开始游戏！";
+            difficultySelector.classList.remove('hidden');
+            restartGameBtn.classList.add('hidden');
+            
+            // 显示模态框
+            gameModal.classList.remove('hidden');
+        }
+
+        // --- 5. Game Logic Functions ---
+
+        /**
+         * 检查水果/炸弹是否被切割
+         */
+        function checkSlice(item) {
+            // 简单碰撞检测：指尖是否在物体半径内
+            const distance = calculateDistance(fingerTip, item);
+            if (distance < item.radius) {
+                
+                if (item.type === 'bomb') {
+                    // 💣 炸弹逻辑：游戏结束
+                    endGame("💣 炸弹爆炸！游戏立即结束！");
+                    item.sliced = true; 
+                    // 红色和黑色爆炸粒子特效
+                    for (let i = 0; i < 40; i++) {
+                        particles.push(new Particle(item.x, item.y, Math.random() > 0.5 ? '#ff4d4d' : '#333333'));
+                    }
+                    return; // 阻止后续水果切片逻辑
+                }
+
+                // SLICE! 水果切片逻辑
+                item.sliced = true;
+                score += item.scoreValue;
+                scoreDisplay.textContent = score;
+                item.velocityY = -10; // 给予一个向上的弹跳效果
+                item.velocityX = (Math.random() - 0.5) * 5;
+                
+                // 创建果汁粒子特效
+                for (let i = 0; i < 20; i++) {
+                    particles.push(new Particle(item.x, item.y, item.color));
+                }
+            }
+        }
+        
+        /**
+         * 游戏状态更新
+         */
+        function updateGame(delta) {
+            if (isGameOver) return; // 游戏结束时停止更新
+
+            const now = performance.now();
+            const settings = DIFFICULTY_SETTINGS[currentMode];
+
+            // 1. Spawning
+            if (now - lastSpawnTime > settings.spawnInterval) {
+                let isBomb = false;
+                if (Math.random() < settings.bombChance && now - timeSinceLastBomb > MIN_TIME_BETWEEN_BOMBS) {
+                    isBomb = true;
+                    timeSinceLastBomb = now;
+                }
+
+                const spawnCount = 1 + Math.floor(Math.random() * settings.maxSpawn);
+                
+                // 确保至少有一个物体生成
+                for(let i = 0; i < spawnCount; i++) {
+                     // 仅在第一个物体上应用炸弹标记
+                     const isCurrentBomb = isBomb && i === 0;
+                     fruits.push(new Fruit(canvas.width, canvas.height, isCurrentBomb, settings.heightBoost));
+                }
+                
+                lastSpawnTime = now;
+            }
+
+            // 2. Item movement and slicing
+            fruits.forEach(item => {
+                if (!item.sliced) {
+                    // 仅对未切割的物体进行碰撞检测
+                    checkSlice(item);
+                }
+                item.update();
+            });
+            
+            // 3. Particle Update
+            particles.forEach(p => p.update());
+            particles = particles.filter(p => p.life > 0);
+            
+            // 4. Clean up off-screen items
+            fruits = fruits.filter(item => {
+                // 如果物体已切，允许它飞溅一段距离
+                if (item.sliced) return item.sliceAnimationTime <= 30;
+                
+                // 如果未切的物体掉到屏幕底部下方，则移除 (如果炸弹未切掉落，不触发Game Over)
+                return item.y > -100; 
+            });
+        }
+        
+        /**
+         * 游戏画面绘制 (主 Canvas)
+         */
+        function drawGame() {
+            // 1. 清除 Canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // 2. 绘制背景
+            if (isTextureLoaded) {
+                // 使用加载的图片作为背景
+                ctx.drawImage(woodTexture, 0, 0, canvas.width, canvas.height);
+            } else {
+                // 绘制木纹背景 (模拟) - Fallback
+                const woodGradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+                woodGradient.addColorStop(0, '#5D4037'); // 深棕色
+                woodGradient.addColorStop(1, '#8D6E63'); // 浅棕色
+                ctx.fillStyle = woodGradient;
+                ctx.fillRect(0, 0, canvas.width, canvas.height); 
+            }
+
+            // 3. 绘制地面/发射区
+            const groundHeight = 50;
+            ctx.fillStyle = 'rgba(26, 32, 44, 0.7)'; // 半透明深色地面
+            ctx.fillRect(0, canvas.height - groundHeight, canvas.width, groundHeight); 
+
+            // 4. 绘制所有物体
+            fruits.forEach(item => item.draw(ctx));
+            
+            // 5. 绘制粒子特效
+            ctx.save();
+            particles.forEach(p => p.draw(ctx));
+            ctx.restore();
+
+
+            // 6. 绘制刀迹和指尖 (Blade Trail and Tip)
+            if (fingerTip.x !== -1 && !isGameOver) {
+                ctx.save();
+                ctx.globalCompositeOperation = 'lighter'; // 使刀迹更亮
+                
+                // 绘制刀迹（前一帧到当前帧的路径）
+                if (previousFingerTip.x !== -1 && calculateDistance(fingerTip, previousFingerTip) < 100) {
+                    ctx.beginPath();
+                    ctx.moveTo(previousFingerTip.x, previousFingerTip.y);
+                    ctx.lineTo(fingerTip.x, fingerTip.y);
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)'; 
+                    ctx.shadowColor = 'rgba(255, 255, 255, 1)';
+                    ctx.shadowBlur = 15;
+                    ctx.lineWidth = 15;
+                    ctx.lineCap = 'round';
+                    ctx.stroke();
+                }
+                
+                // 绘制指尖 (刀尖 - 使用三角形模拟小刀)
+                ctx.beginPath();
+                ctx.moveTo(fingerTip.x, fingerTip.y - 12); // 刀尖
+                ctx.lineTo(fingerTip.x + 8, fingerTip.y + 8); // 右侧底部
+                ctx.lineTo(fingerTip.x - 8, fingerTip.y + 8); // 左侧底部
+                ctx.closePath();
+                
+                ctx.fillStyle = 'rgba(255, 255, 255, 1)'; // 亮白色刀身
+                ctx.shadowColor = 'rgba(255, 255, 0, 1)'; // 黄色光晕
+                ctx.shadowBlur = 15;
+                ctx.fill();
+                
+                ctx.restore();
+                
+                // 更新上一帧位置
+                previousFingerTip.x = fingerTip.x;
+                previousFingerTip.y = fingerTip.y;
+            } else {
+                 // 如果手不见了或游戏结束，重置前一帧位置
+                 previousFingerTip.x = -1;
+                 previousFingerTip.y = -1;
+            }
+        }
+
+        /**
+         * 绘制追踪画面 (右上角 Tracker Canvas)
+         */
+        function drawTracker(hands) {
+             // 1. 绘制视频帧 (Tracker Canvas has CSS transform: scaleX(-1) applied)
+            trackerCtx.clearRect(0, 0, trackerCanvas.width, trackerCanvas.height);
+            
+            // 直接绘制视频内容。
+            trackerCtx.drawImage(
+                video, 
+                0, 0, video.videoWidth, video.videoHeight, // 源区域
+                0, 0, trackerCanvas.width, trackerCanvas.height // 目标区域
+            );
+            
+            // 2. 绘制手部关键点
+            if (hands && hands.length > 0) {
+                // 缩放/映射关键点到小画布的尺寸
+                const scaleX = trackerCanvas.width / video.videoWidth;
+                const scaleY = trackerCanvas.height / video.videoHeight;
+                
+                // 对 X 坐标进行翻转，以抵消 CSS transform: scaleX(-1) 的效果
+                const scaledLandmarks = hands[0].keypoints.map(p => ({
+                    x: (video.videoWidth - p.x) * scaleX, 
+                    y: p.y * scaleY,
+                    z: p.z 
+                }));
+                
+                drawKeypoints(scaledLandmarks, trackerCtx);
+            }
+        }
+
+
+        // --- 6. TensorFlow/MediaPipe Detection ---
+
+        /**
+         * 实时检测手部，并更新指尖位置
+         */
+        async function detectHands() {
+            if (!detector || video.paused || video.ended) {
+                return;
+            }
+
+            // 在 video 元素上运行检测，并保持 flipHorizontal: true 来校正坐标
+            const hands = await detector.estimateHands(video, {
+                flipHorizontal: true
+            });
+            
+            // 绘制到追踪画布 (无论是否检测到手)
+            drawTracker(hands);
+
+            if (hands && hands.length > 0) {
+                // 仅使用检测到的第一只手
+                const landmarks = hands[0].keypoints;
+                
+                // 食指指尖是关键点 8
+                const indexTip = landmarks[8];
+                
+                // 更新指尖全局状态
+                fingerTip.x = indexTip.x;
+                fingerTip.y = indexTip.y;
+                fingerTip.z = indexTip.z;
+                
+                if (!isGameOver) {
+                    systemMessage.textContent = `✅ 检测中：使用食指指尖 (X:${Math.round(indexTip.x)}, Y:${Math.round(indexTip.y)})`;
+                }
+
+            } else {
+                // 手部未检测到，重置指尖位置
+                fingerTip.x = -1;
+                fingerTip.y = -1;
+                if (!isGameOver) {
+                    systemMessage.textContent = '👆 请伸出食指，放在镜头前。';
+                }
+            }
+        }
+
+        /**
+         * 加载背景纹理
+         */
+        function loadTexture() {
+            woodTexture.onload = () => {
+                isTextureLoaded = true;
+                console.log('Wood texture loaded successfully.');
+            };
+            woodTexture.onerror = () => {
+                console.error('Failed to load wood texture. Using fallback.');
+                // 纹理加载失败时，保持 isTextureLoaded 为 false，drawGame 会使用渐变回退
+                isTextureLoaded = false;
+            };
+            woodTexture.src = TEXTURE_URL;
+        }
+
+        // --- 7. Main Loop & Setup ---
+
+        /**
+         * 游戏主循环
+         */
+        function gameLoop(timestamp) {
+            // 1. 异步检测手部（不等待结果，非阻塞）
+            detectHands(); 
+
+            // 2. 更新游戏状态
+            const delta = timestamp - lastRender;
+            if (delta > 0 && delta < 200) { // 避免初始或丢失焦点时的巨大时间差
+                updateGame(delta);
+            }
+            lastRender = timestamp;
+
+            // 3. 绘制游戏画面
+            drawGame();
+
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        /**
+         * 初始化摄像头和 Canvas 尺寸
+         */
+        async function setupWebcam() {
+            systemMessage.textContent = '正在请求摄像头权限...';
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 'video': true });
+                video.srcObject = stream;
+                
+                video.onloadedmetadata = () => {
+                    video.play();
+                    
+                    // 设置 Canvas 内部绘制尺寸与视频源匹配（重要：模型坐标依赖此尺寸）
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    
+                    // 追踪画布的内部尺寸也需要与视频源匹配
+                    trackerCanvas.width = video.videoWidth;
+                    trackerCanvas.height = video.videoHeight;
+                    
+                    loadModel();
+                };
+            } catch (e) {
+                systemMessage.textContent = '❌ 无法访问摄像头。请检查权限。';
+                console.error('Error accessing webcam:', e);
+                loadingDiv.classList.add('hidden');
+            }
+        }
+
+        /**
+         * 加载 Hand Pose Detection 模型
+         */
+        async function loadModel() {
+            systemMessage.textContent = '正在加载手部模型...';
+            loadingDiv.classList.remove('hidden');
+
+            try {
+                const model = window.handPoseDetection.SupportedModels.MediaPipeHands;
+                const detectorConfig = {
+                    runtime: 'mediapipe', 
+                    modelType: 'full', 
+                    solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915' 
+                };
+                
+                detector = await window.handPoseDetection.createDetector(model, detectorConfig);
+                isModelLoaded = true;
+                loadingDiv.classList.add('hidden');
+                
+                // 模型加载完成后，显示游戏模式选择界面
+                restartGame(); 
+                
+                // 启动动画循环（即使在Game Over状态，也需要运行来处理UI和检测）
+                if (!animationFrameId) {
+                    animationFrameId = requestAnimationFrame(gameLoop);
+                }
+
+            } catch (e) {
+                console.error('Error loading model:', e);
+                systemMessage.textContent = '❌ 模型加载失败。请检查网络。';
+                loadingDiv.classList.add('hidden');
+            }
+        }
+        
+        // --- 8. Event Listeners ---
+
+        // 全屏按钮事件
+        fullscreenBtn.addEventListener('click', () => {
+            const gameContainer = document.querySelector('.game-container');
+            if (document.fullscreenElement) {
+                document.exitFullscreen();
+                fullscreenBtn.textContent = '全屏';
+            } else {
+                if (gameContainer.requestFullscreen) {
+                    gameContainer.requestFullscreen();
+                    fullscreenBtn.textContent = '退出全屏';
+                }
+            }
+        });
+
+        // 难度选择按钮事件
+        difficultySelector.addEventListener('click', (event) => {
+            if (event.target.classList.contains('mode-btn')) {
+                const mode = event.target.dataset.mode;
+                startGame(mode);
+            }
+        });
+
+        // 重新开始按钮事件
+        restartGameBtn.addEventListener('click', restartGame);
+
+
+        /**
+         * 启动应用
+         */
+        window.onload = () => {
+            if (typeof tf === 'undefined' || typeof window.handPoseDetection === 'undefined') {
+                systemMessage.textContent = '❌ 关键的机器学习库加载失败。';
+                loadingDiv.classList.add('hidden');
+                return;
+            }
+            loadTexture(); // 预加载背景纹理
+            setupWebcam();
+        };
+
+        // 停止动画循环
+        window.onbeforeunload = () => {
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+            }
+        };
+        
+        // 初始设置计时器显示
+        timerDisplay.textContent = formatTime(DIFFICULTY_SETTINGS['Easy'].time);
+
+    </script>
+</body>
+</html>
